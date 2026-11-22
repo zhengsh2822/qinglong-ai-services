@@ -33,7 +33,7 @@ func TestWithAuthLoopbackOnly(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	req := httptest.NewRequest(http.MethodGet, "/v1/agent/message", nil)
 	req.RemoteAddr = "127.0.0.1:1234"
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -41,7 +41,7 @@ func TestWithAuthLoopbackOnly(t *testing.T) {
 		t.Fatalf("loopback should pass, got %d", rec.Code)
 	}
 
-	req2 := httptest.NewRequest(http.MethodGet, "/health", nil)
+	req2 := httptest.NewRequest(http.MethodGet, "/v1/agent/message", nil)
 	req2.RemoteAddr = "10.0.0.8:1234"
 	rec2 := httptest.NewRecorder()
 	h.ServeHTTP(rec2, req2)
@@ -50,12 +50,28 @@ func TestWithAuthLoopbackOnly(t *testing.T) {
 	}
 }
 
+// /health 固定免鉴权：安装脚本的就绪检查与各类探针都是裸打它，
+// 不能因为配了令牌就 401，否则服务正常也会被判成没起来。
+func TestHealthBypassesAuth(t *testing.T) {
+	h := withAuth("s3cret", "", "", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	req.RemoteAddr = "10.0.0.8:1234"
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("health should be public, got %d", rec.Code)
+	}
+}
+
 func TestWithAuthToken(t *testing.T) {
 	h := withAuth("s3cret", "", "", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	ok := httptest.NewRequest(http.MethodGet, "/health", nil)
+	ok := httptest.NewRequest(http.MethodGet, "/v1/agent/message", nil)
 	ok.RemoteAddr = "10.0.0.8:1234"
 	ok.Header.Set("Authorization", "Bearer s3cret")
 	recOK := httptest.NewRecorder()
@@ -64,7 +80,7 @@ func TestWithAuthToken(t *testing.T) {
 		t.Fatalf("valid token should pass, got %d", recOK.Code)
 	}
 
-	bad := httptest.NewRequest(http.MethodGet, "/health", nil)
+	bad := httptest.NewRequest(http.MethodGet, "/v1/agent/message", nil)
 	bad.RemoteAddr = "10.0.0.8:1234"
 	bad.Header.Set("Authorization", "Bearer wrong")
 	recBad := httptest.NewRecorder()
@@ -130,7 +146,7 @@ func TestWithAuthMCPToken(t *testing.T) {
 		t.Fatalf("global token should not pass mcp path, got %d", recBad.Code)
 	}
 
-	other := httptest.NewRequest(http.MethodGet, "/health", nil)
+	other := httptest.NewRequest(http.MethodGet, "/v1/agent/message", nil)
 	other.RemoteAddr = "10.0.0.8:1234"
 	other.Header.Set("Authorization", "Bearer global")
 	recOther := httptest.NewRecorder()

@@ -112,12 +112,9 @@ for cand in "$SCRIPT_DIR/agentcore-linux-$ARCH" "$SCRIPT_DIR/dist/agentcore-linu
   if [ -f "$cand" ]; then LOCAL_BIN="$cand"; break; fi
 done
 
-if [ -n "$LOCAL_BIN" ]; then
-  say "使用本地二进制：$LOCAL_BIN"
-  install -m 755 "$LOCAL_BIN" "$BIN"
-elif [ "$FROM_SOURCE" -eq 1 ]; then
+build_from_source() {
   say "从源码编译（$ARCH）"
-  command -v go >/dev/null 2>&1 || die "没有 go，先装 Go 1.21+ 或不加 --from-source"
+  command -v go >/dev/null 2>&1 || die "没有 go，无法源码编译；可改用 Docker（docker compose up -d），或先把 agentcore-linux-$ARCH 放到本脚本同目录后重跑"
   TMP="$(mktemp -d)"
   trap 'rm -rf "$TMP"' EXIT
   download "https://github.com/$REPO/archive/refs/heads/main.tar.gz" "$TMP/src.tgz"
@@ -126,6 +123,13 @@ elif [ "$FROM_SOURCE" -eq 1 ]; then
   [ -n "$SRC_ROOT" ] || die "源码包结构异常"
   ( cd "$SRC_ROOT/src" && GOOS=linux GOARCH="$ARCH" CGO_ENABLED=0 \
       go build -trimpath -ldflags "-s -w" -o "$BIN" . )
+}
+
+if [ -n "$LOCAL_BIN" ]; then
+  say "使用本地二进制：$LOCAL_BIN"
+  install -m 755 "$LOCAL_BIN" "$BIN"
+elif [ "$FROM_SOURCE" -eq 1 ]; then
+  build_from_source
 else
   if [ "$VERSION" = "latest" ]; then
     URL="https://github.com/$REPO/releases/latest/download/agentcore-linux-$ARCH"
@@ -133,12 +137,24 @@ else
     URL="https://github.com/$REPO/releases/download/$VERSION/agentcore-linux-$ARCH"
   fi
   say "下载：$URL"
-  if ! download "$URL" "$BIN"; then
-    warn "下载失败。私有仓库请先把 agentcore-linux-$ARCH 传到服务器，再在本目录执行本脚本；"
-    warn "或者加 --from-source 用源码编译（需要 go）。"
-    exit 1
+  if download "$URL" "$BIN"; then
+    chmod 755 "$BIN"
+  else
+    rm -f "$BIN"
+    warn "Release 下载失败（仓库还没有发布二进制，或指定版本不存在）。"
+    if command -v go >/dev/null 2>&1; then
+      warn "检测到 go，自动改用源码编译。"
+      build_from_source
+    else
+      warn "可选做法："
+      warn "  1) 先发版：git tag vx.y.z && git push origin vx.y.z"
+      warn "     （.github/workflows/release.yml 会自动产出 agentcore-linux-amd64 / arm64）"
+      warn "  2) 或在有 go 的机器上加 --from-source 重跑本脚本"
+      warn "  3) 或用 Docker 部署：docker compose up -d"
+      warn "  4) 或手动把 agentcore-linux-$ARCH 放到本脚本同目录后重跑"
+      exit 1
+    fi
   fi
-  chmod 755 "$BIN"
 fi
 
 chmod 755 "$BIN"

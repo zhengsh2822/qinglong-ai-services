@@ -170,13 +170,20 @@ func initTimezone() {
 }
 
 // withAuth：配置了 authToken 就强制 Bearer；没配置则只接受本机回环访问。
-// withAuth 统一鉴权。
+// withAuth 统一鉴权（唯一例外：/health 探活固定公开）。
 //
 // MCP 端点可以配独立令牌（mcp.token）：配了之后该路径只认这个令牌，
 // 方便把 MCP 单独发给 Cursor / Claude Code 而不暴露全局 authToken。
 // 未配独立令牌时沿用全局规则（authToken 为空则只允许本机）。
 func withAuth(token, mcpPath, mcpToken string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 探活接口固定免鉴权：deploy/install.sh 的就绪检查、systemd/容器探针、
+		// 反代与监控都是裸打 /health，要求令牌会让它们把正常服务误判成挂了。
+		// 该接口只回 ok/version/timezone，不含任何业务数据。
+		if r.URL.Path == "/health" {
+			next.ServeHTTP(w, r)
+			return
+		}
 		if mcpPath != "" && r.URL.Path == mcpPath && mcpToken != "" {
 			got := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 			if subtle.ConstantTimeCompare([]byte(got), []byte(mcpToken)) != 1 {

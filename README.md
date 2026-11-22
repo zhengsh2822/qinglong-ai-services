@@ -33,6 +33,10 @@ curl -fsSL https://raw.githubusercontent.com/zhengsh2822/qinglong-ai-services/ma
 
 装完会打印管理页地址、令牌和 MCP 端点。管理页默认只听 `127.0.0.1:18791`：
 
+> 脚本默认从 GitHub Release 下载二进制。仓库还没发版时会自动改用源码编译（需要 go）；
+> 两者都没有就按提示换 Docker 或手动放二进制。发版只需打 tag：
+> `git tag v0.1.4 && git push origin v0.1.4`（CI 会产出 `agentcore-linux-amd64/arm64`）。
+
 ```bash
 # 本机浏览器访问（推荐，配 SSH 隧道）
 ssh -L 18791:127.0.0.1:18791 root@你的服务器
@@ -183,11 +187,13 @@ POST /v1/agent/confirm
 
 事件类型：`message` / `candidates` / `needConfirmation` / `error`。
 
-健康检查：`GET /health` → `{"ok":true,"version":"...","timezone":"..."}`。
+健康检查：`GET /health` → `{"ok":true,"version":"...","timezone":"..."}`（固定免鉴权，
+安装脚本的就绪检查、systemd/容器探针、反代健康检查都裸打它）。
 
 ## 安全
 
 - 默认只监听回环；对外必须设 `authToken`，否则非本机请求直接 403。
+- `/health` 固定免鉴权（只回 ok/版本/时区），其余接口和 `/mcp` 都要令牌。
 - 管理页 `/api/*` 需要 `authToken` 或 `webui.token`；页面本身是静态 HTML，不含密钥。
 - `run_task` / `stop_task` 永远需要人工确认。
 - 工具结果经脱敏规则处理（`value` / `token` / `cookie` 等字段打码）后才交给模型。
