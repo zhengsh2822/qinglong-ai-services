@@ -1,0 +1,824 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f1115">
+<meta name="color-scheme" content="dark">
+<!-- KernelSU/APatch 内置安全区变量：没有它，KSU WebView 里 env() 恒为 0 -->
+<link rel="stylesheet" type="text/css" href="/internal/insets.css" />
+<title>AI Agent Core</title>
+<style>
+  :root{
+    --bg:#0f1115; --card:#171a21; --line:#262b36; --text:#e8ecf4;
+    --muted:#8b93a7; --accent:#00cccc; --danger:#ea4d3e;
+    /* KSU WebUI 注入的安全区变量；普通浏览器回落到 env() */
+    --safe-top: var(--window-inset-top, env(safe-area-inset-top, 0px));
+    --safe-bottom: var(--window-inset-bottom, env(safe-area-inset-bottom, 0px));
+  }
+  html{background:var(--bg);-webkit-text-size-adjust:100%}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{
+    margin:0;
+    /* 沉浸式：用 KSU 的 --window-inset-* 变量（env() 在 KSU WebView 里常为 0） */
+    padding:
+      calc(14px + var(--safe-top))
+      calc(14px + env(safe-area-inset-right, 0px))
+      calc(28px + var(--safe-bottom))
+      calc(14px + env(safe-area-inset-left, 0px));
+    background:var(--bg);color:var(--text);
+    font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
+    font-size:14px;line-height:1.5;overscroll-behavior:none;
+  }
+  h1{font-size:17px;margin:0 0 4px;font-weight:500}
+  .sub{color:var(--muted);font-size:12px;margin-bottom:16px;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:14px}
+  .card h2{font-size:13px;margin:0 0 10px;color:var(--accent);font-weight:500}
+  label{display:block;font-size:12px;color:var(--muted);margin:10px 0 4px}
+  input,select{width:100%;padding:9px 11px;border-radius:10px;border:1px solid var(--line);
+    background:#0d0f13;color:var(--text);font-size:13px;outline:none;font-family:inherit}
+  input:focus{border-color:var(--accent)}
+  .row{display:flex;gap:10px}
+  .row>div{flex:1;min-width:0}
+  .actions{display:flex;gap:10px;margin-top:16px}
+  .actions.wrap{flex-wrap:wrap}
+  button{flex:1;min-width:96px;padding:12px;border-radius:12px;border:none;font-size:14px;
+    background:var(--accent);color:#04212a;font-weight:600;font-family:inherit;
+    transition:transform .08s ease, filter .12s ease, opacity .15s ease}
+  button.ghost{background:transparent;border:1px solid var(--line);color:var(--text);font-weight:400}
+  button:disabled{opacity:.5}
+  /* 按下反馈：缩放 + 压暗，移动端 WebView 也能感知 */
+  button:active:not(:disabled){transform:scale(.97);filter:brightness(.88)}
+  pre{background:#0d0f13;border:1px solid var(--line);border-radius:10px;padding:10px;
+    font-size:11px;line-height:1.5;color:#b9c2d6;white-space:pre-wrap;word-break:break-all;
+    max-height:220px;overflow:auto;margin:8px 0 0}
+  .hint{font-size:11px;color:var(--muted);line-height:1.6;margin-top:8px}
+  .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--danger);flex:0 0 auto}
+  .dot.on{background:var(--accent);box-shadow:0 0 6px rgba(0,204,204,.6)}
+  .pill{font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:999px;
+    padding:1px 8px;white-space:nowrap}
+  /* 轻提示：固定底部，不拦截点击，1.8s 自动消失 */
+  .toast{position:fixed;left:50%;bottom:calc(24px + var(--safe-bottom));z-index:99;
+    max-width:calc(100vw - 40px);padding:10px 16px;border-radius:12px;text-align:center;
+    background:#1f2430;border:1px solid var(--line);color:var(--text);font-size:13px;
+    box-shadow:0 10px 28px rgba(0,0,0,.45);pointer-events:none;
+    opacity:0;transform:translate(-50%,10px);
+    transition:opacity .18s ease, transform .18s ease}
+  .toast.show{opacity:1;transform:translate(-50%,0)}
+  .toast.err{border-color:var(--danger);color:#ffb7ae}
+  /* 自绘下拉：原生 select 会露出系统皮肤，与深色卡片不搭 */
+  .picker{position:relative;flex:1;min-width:0}
+  .picker-trigger{display:flex;align-items:center;justify-content:space-between;gap:8px;
+    width:100%;padding:9px 11px;border-radius:10px;border:1px solid var(--line);
+    background:#0d0f13;color:var(--text);font-size:13px;font-weight:400;font-family:inherit;
+    text-align:left;flex:none;min-width:0;transition:border-color .15s ease}
+  .picker-trigger:active:not(:disabled){transform:none;filter:none;background:#131820}
+  .picker-trigger.open{border-color:var(--accent)}
+  .picker-arrow{color:var(--muted);font-size:11px;line-height:1;transition:transform .18s ease}
+  .picker-trigger.open .picker-arrow{transform:rotate(180deg)}
+  .picker-menu{position:absolute;left:0;right:0;top:calc(100% + 6px);z-index:50;
+    max-height:240px;overflow:auto;padding:6px;display:none;
+    background:#171a21;border:1px solid var(--line);border-radius:12px;
+    box-shadow:0 16px 40px rgba(0,0,0,.5)}
+  .picker-menu.open{display:block}
+  .picker-menu.up{top:auto;bottom:calc(100% + 6px)}
+  .picker-item{display:flex;align-items:center;justify-content:space-between;gap:8px;
+    padding:9px 10px;border-radius:8px;font-size:13px;color:var(--text);cursor:pointer}
+  .picker-item:active{background:#1f2430}
+  .picker-item.sel{color:var(--accent)}
+  .picker-check{font-size:12px;color:var(--accent)}
+</style>
+</head>
+<body>
+<h1>Qinglong AI Services</h1>
+<div class="sub">
+  <span class="pill" id="modeBadge">—</span>
+  <span id="statusDot" class="dot"></span>
+  <span id="statusText">检测中…</span>
+  <span id="deviceTime" class="pill">时间 —</span>
+</div>
+
+<div class="card" id="loginCard" style="display:none">
+  <h2>需要访问令牌</h2>
+  <label>config.json 里的 authToken（或 webui.token）</label>
+  <div class="row" style="align-items:center">
+    <input id="loginToken" type="password" placeholder="Bearer 令牌" autocomplete="current-password">
+    <button id="loginBtn" class="ghost" style="flex:0 0 auto;white-space:nowrap">进入</button>
+  </div>
+  <div class="hint">令牌只存在浏览器 localStorage，不会发到别处。没配令牌时管理 API 只接受本机访问。</div>
+</div>
+
+<div class="card">
+  <h2>服务</h2>
+  <div class="row">
+    <div>
+      <label>监听地址</label>
+      <input id="listen" placeholder="127.0.0.1:18790">
+    </div>
+    <div>
+      <label>访问令牌（可空）</label>
+      <input id="authToken" placeholder="留空仅本机可访问">
+    </div>
+  </div>
+  <label>最大推理轮次</label>
+  <input id="maxRounds" type="number" min="1" max="8" placeholder="4">
+  <div class="hint" id="listenHint">默认只监听回环，App 远程档填 http://127.0.0.1:18790。改为 0.0.0.0 时必须设置访问令牌。</div>
+</div>
+
+<div class="card">
+  <h2>MCP 服务（7×24）</h2>
+  <label style="display:flex;align-items:center;gap:8px;color:var(--text)">
+    <input id="mcpEnabled" type="checkbox" style="width:auto;margin:0">
+    <span>启用 MCP 端点</span>
+  </label>
+  <div class="row">
+    <div>
+      <label>端点路径</label>
+      <input id="mcpPath" placeholder="/mcp">
+    </div>
+    <div>
+      <label>独立令牌（可空）</label>
+      <input id="mcpToken" type="password" placeholder="空则沿用访问令牌">
+    </div>
+  </div>
+  <label>客户端填这个地址</label>
+  <div class="row" style="align-items:center">
+    <input id="mcpEndpoint" readonly>
+    <button id="mcpCopy" class="ghost" style="white-space:nowrap;flex:0 0 auto">复制</button>
+  </div>
+  <label>客户端配置片段</label>
+  <div class="row" style="align-items:center">
+    <div class="picker" id="mcpClientPicker">
+      <button type="button" class="picker-trigger" id="mcpClientTrigger">
+        <span id="mcpClientLabel">Cursor</span>
+        <span class="picker-arrow">▾</span>
+      </button>
+      <div class="picker-menu" id="mcpClientMenu"></div>
+    </div>
+    <button id="mcpCopyClient" class="ghost" style="white-space:nowrap;flex:0 0 auto">复制</button>
+  </div>
+  <select id="mcpClient" style="display:none"></select>
+  <pre id="mcpSnippet">选择客户端后生成配置…</pre>
+  <div class="hint" id="mcpHint">
+    Core 常驻运行，App 退出后仍可用 —— Cursor / Claude Code / Cherry Studio 的 7×24 接入走这里。
+    监听 <code>0.0.0.0</code> 时地址自动取手机当前局域网 IP（换网络后重开本页刷新）。
+    片段已自动带上认证头（优先「独立令牌」，为空用上方「访问令牌」），含令牌请注意不要外发。
+  </div>
+</div>
+
+<div class="card">
+  <h2>模型（OpenAI 兼容）</h2>
+  <label>Base URL</label>
+  <input id="llmBaseUrl" placeholder="https://your-api-host/v1">
+  <label>API Key</label>
+  <input id="llmApiKey" type="password" placeholder="API Key">
+  <div class="row">
+    <div>
+      <label>模型名</label>
+      <input id="llmModel" placeholder="模型名">
+    </div>
+    <div>
+      <label>temperature（留空不传）</label>
+      <input id="llmTemperature" placeholder="MiMo 思考模式留空">
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>青龙面板</h2>
+  <label>面板地址</label>
+  <input id="qlBaseUrl" placeholder="http://127.0.0.1:5700">
+  <label>应用 Token（与应用凭据二选一）</label>
+  <input id="qlToken" type="password" placeholder="面板「系统设置 → 应用设置」创建">
+  <div class="row">
+    <div>
+      <label>Client ID</label>
+      <input id="qlClientId" placeholder="可选">
+    </div>
+    <div>
+      <label>Client Secret</label>
+      <input id="qlClientSecret" type="password" placeholder="可选">
+    </div>
+  </div>
+  <div class="hint">建议只授予 crons / dashboard / logs / envs / scripts / system 的只读权限；需要运行任务再加 crons 写权限。</div>
+</div>
+
+<div class="card">
+  <h2>QQ 机器人（WebSocket）</h2>
+  <label style="display:flex;align-items:center;gap:8px;color:var(--text)">
+    <input id="qqEnabled" type="checkbox" style="width:auto;margin:0">
+    <span>启用 QQ 机器人</span>
+  </label>
+  <label>AppID</label>
+  <input id="qqAppId" placeholder="QQ 开放平台机器人 AppID">
+  <label>AppSecret</label>
+  <input id="qqAppSecret" type="password" placeholder="机器人密钥">
+  <div class="hint">消息接收方式选 WebSocket（不需要公网 IP）；Intents 用默认的「群 @ + 私聊」。凭据存在 0600 的 config.json。</div>
+</div>
+
+<div class="actions">
+  <button id="save">保存并重启</button>
+  <button id="refresh" class="ghost">刷新状态</button>
+</div>
+<div class="actions">
+  <button id="logs" class="ghost">查看运行日志</button>
+  <button id="audit" class="ghost">查看审计</button>
+</div>
+<pre id="out">等待操作…</pre>
+<div class="hint">配置：<span id="pathHint">/data/adb/agentcore/config.json</span>（0600）· 审计：<span id="auditHint">/data/adb/agentcore/audit.jsonl</span></div>
+
+<script>
+const CFG = '/data/adb/agentcore/config.json';
+const DATA = '/data/adb/agentcore';
+const SERVICE = 'agentcore';
+
+// 同一个页面跑在两种形态下：
+//   KSU   —— 管理器注入 ksu.exec()，直接跑 root 命令读写 /data/adb/agentcore
+//   服务器 —— 进程自带本页（Qinglong AI Services 内置 WebUI），改走 /api/*
+const KSU_MODE = !!(window.ksu && window.ksu.exec);
+let SERVER_INFO = null;
+
+function exec(cmd){
+  return new Promise((resolve, reject) => {
+    if (!KSU_MODE) { reject(new Error('当前不在 KernelSU WebUI 中')); return; }
+    const cb = 'cb_' + Date.now() + '_' + Math.floor(Math.random()*1000);
+    window[cb] = (errno, stdout, stderr) => { delete window[cb]; resolve({errno, stdout, stderr}); };
+    try { ksu.exec(cmd, '{}', cb); } catch(e){ reject(e); }
+  });
+}
+
+// 服务器模式的令牌：存 localStorage，随每次请求带 Bearer
+let TOKEN = '';
+try { TOKEN = localStorage.getItem('qas.token') || ''; } catch(e){ TOKEN = ''; }
+function setToken(t){
+  TOKEN = (t || '').trim();
+  try {
+    if (TOKEN) localStorage.setItem('qas.token', TOKEN);
+    else localStorage.removeItem('qas.token');
+  } catch(e){}
+}
+
+async function apiFetch(path, opts){
+  opts = opts || {};
+  const headers = Object.assign({ 'Accept': 'application/json' }, opts.headers || {});
+  if (TOKEN) headers['Authorization'] = 'Bearer ' + TOKEN;
+  if (opts.body) headers['Content-Type'] = 'application/json';
+  const res = await fetch(path, { method: opts.method || 'GET', headers, body: opts.body });
+  if (res.status === 401 || res.status === 403) {
+    const err = new Error('需要访问令牌');
+    err.unauthorized = true;
+    throw err;
+  }
+  if (!res.ok) {
+    let msg = res.status + ' ' + res.statusText;
+    try { const j = await res.json(); if (j && j.error) msg = j.error; } catch(e){}
+    throw new Error(msg);
+  }
+  const ct = res.headers.get('content-type') || '';
+  return ct.indexOf('application/json') >= 0 ? res.json() : res.text();
+}
+
+// KSU 后端：沿用原来的 shell 命令，行为不变
+const ksuBackend = {
+  mode: 'ksu',
+  async readConfig(){
+    const r = await exec('cat ' + CFG);
+    if (r.errno !== 0 || !String(r.stdout).trim()) return null;
+    return JSON.parse(r.stdout);
+  },
+  async saveConfig(json){
+    const cmd = 'mkdir -p ' + DATA + ' && echo ' + b64(json) +
+      ' | base64 -d > ' + CFG + ' && chmod 600 ' + CFG + ' && echo OK';
+    const w = await exec(cmd);
+    if (w.errno !== 0 || !String(w.stdout).includes('OK')) {
+      throw new Error(w.stderr || w.stdout || '写入失败');
+    }
+    // 服务由 watchdog 拉起；这里只结束旧进程触发重启
+    await exec('PID=$(pidof ' + SERVICE + '); [ -n "$PID" ] && kill $PID; sleep 1');
+  },
+  async status(){
+    const [pid, date] = await Promise.all([
+      exec('pidof ' + SERVICE),
+      exec("date '+%Y-%m-%d %H:%M:%S %Z'")
+    ]);
+    const on = pid.errno === 0 && String(pid.stdout).trim() !== '';
+    let logs = '';
+    if (!on) {
+      const log = await exec('tail -n 30 ' + DATA + '/stdout.log 2>/dev/null');
+      logs = log.stdout || '';
+    }
+    return {
+      on: on,
+      pid: String(pid.stdout || '').trim().split('\n')[0],
+      now: String(date.stdout || '').trim(),
+      logs: logs,
+      label: '设备时间',
+      configPath: CFG,
+      auditPath: DATA + '/audit.jsonl'
+    };
+  },
+  async logs(){
+    const r = await exec('echo "== stdout =="; tail -n 40 ' + DATA + '/stdout.log 2>/dev/null; ' +
+      'echo; echo "== 时区 =="; getprop persist.sys.timezone');
+    return r.stdout || r.stderr || '暂无日志';
+  },
+  async audit(){
+    const r = await exec('tail -n 15 ' + DATA + '/audit.jsonl 2>/dev/null || echo "暂无审计记录"');
+    return r.stdout || r.stderr || '暂无审计记录';
+  },
+  async restart(){
+    await exec('PID=$(pidof ' + SERVICE + '); [ -n "$PID" ] && kill $PID; sleep 1');
+  }
+};
+
+// 服务器后端：一切走 /api/*，不需要 root
+const httpBackend = {
+  mode: 'server',
+  async readConfig(){
+    try {
+      return await apiFetch('/api/config');
+    } catch(e){
+      if (e.unauthorized) throw e;
+      if (String(e.message).indexOf('500') === 0) return null;
+      throw e;
+    }
+  },
+  async saveConfig(json){
+    await apiFetch('/api/config', { method: 'PUT', body: json });
+  },
+  async status(){
+    const s = await apiFetch('/api/status');
+    SERVER_INFO = s;
+    return {
+      on: true,
+      pid: String(s.pid || ''),
+      now: s.now || '',
+      logs: '',
+      label: '服务端时间',
+      configPath: (s.paths && s.paths.config) || '',
+      auditPath: (s.paths && s.paths.audit) || '',
+      mcpEndpoint: (s.mcp && s.mcp.endpoint) || '',
+      version: s.version || ''
+    };
+  },
+  async logs(){
+    const r = await apiFetch('/api/logs?lines=80');
+    return r.text || r.note || '暂无日志';
+  },
+  async audit(){
+    const r = await apiFetch('/api/audit?lines=40');
+    return r.text || r.note || '暂无审计记录';
+  },
+  async restart(){
+    await apiFetch('/api/restart', { method: 'POST' });
+  }
+};
+
+const api = KSU_MODE ? ksuBackend : httpBackend;
+
+const $ = id => document.getElementById(id);
+const out = msg => { $('out').textContent = msg; };
+
+// 轻提示：操作结果立即可见，不用滚动到底部的输出区
+let toastTimer = null;
+function toast(msg, ok){
+  let el = document.getElementById('toast');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'toast';
+    document.body.appendChild(el);
+  }
+  el.textContent = msg;
+  el.className = 'toast show' + (ok === false ? ' err' : '');
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.className = 'toast'; }, 1800);
+}
+
+function b64(str){ return btoa(unescape(encodeURIComponent(str))); }
+
+// 服务器模式下 /api/* 需要令牌：第一次打开页面就在这里引导填写
+function showLogin(){
+  $('loginCard').style.display = '';
+  $('loginToken').value = TOKEN;
+  $('statusText').textContent = '需要访问令牌';
+  $('statusDot').className = 'dot';
+  try { $('loginToken').focus(); } catch(e){}
+}
+
+// 原始配置：保存时以它为底，页面没编辑的字段（skill / dns / protocol / webui…）
+// 原样带回去，避免整文件覆盖把小众配置项冲掉。
+let RAW_CONFIG = {};
+
+function fill(cfg){
+  RAW_CONFIG = cfg || {};
+  $('listen').value = cfg.listen || '127.0.0.1:18790';
+  $('authToken').value = cfg.authToken || '';
+  $('maxRounds').value = cfg.maxRounds || 4;
+  const llm = cfg.llm || {};
+  $('llmBaseUrl').value = llm.baseUrl || '';
+  $('llmApiKey').value = llm.apiKey || '';
+  $('llmModel').value = llm.model || '';
+  $('llmTemperature').value = (llm.temperature === null || llm.temperature === undefined) ? '' : llm.temperature;
+  const ql = cfg.qinglong || {};
+  $('qlBaseUrl').value = ql.baseUrl || '';
+  $('qlToken').value = ql.token || '';
+  $('qlClientId').value = ql.clientId || '';
+  $('qlClientSecret').value = ql.clientSecret || '';
+  const qq = cfg.qqbot || {};
+  $('qqEnabled').checked = qq.enabled === true;
+  $('qqAppId').value = qq.appId || '';
+  $('qqAppSecret').value = qq.appSecret || '';
+  const mcp = cfg.mcp || {};
+  $('mcpEnabled').checked = mcp.enabled !== false;
+  $('mcpPath').value = mcp.path || '/mcp';
+  $('mcpToken').value = mcp.token || '';
+  syncMcpEndpoint();
+}
+
+function collect(){
+  const base = JSON.parse(JSON.stringify(RAW_CONFIG || {}));
+  const temp = $('llmTemperature').value.trim();
+  base.listen = $('listen').value.trim() || '127.0.0.1:18790';
+  base.authToken = $('authToken').value.trim();
+  base.maxRounds = parseInt($('maxRounds').value || '4', 10) || 4;
+  base.llm = Object.assign({}, base.llm, {
+    baseUrl: $('llmBaseUrl').value.trim(),
+    apiKey: $('llmApiKey').value.trim(),
+    model: $('llmModel').value.trim(),
+    temperature: temp === '' ? null : parseFloat(temp)
+  });
+  base.qinglong = Object.assign({}, base.qinglong, {
+    baseUrl: $('qlBaseUrl').value.trim(),
+    token: $('qlToken').value.trim(),
+    clientId: $('qlClientId').value.trim(),
+    clientSecret: $('qlClientSecret').value.trim()
+  });
+  base.qqbot = Object.assign({}, base.qqbot, {
+    enabled: $('qqEnabled').checked,
+    appId: $('qqAppId').value.trim(),
+    appSecret: $('qqAppSecret').value.trim()
+  });
+  base.mcp = Object.assign({}, base.mcp, {
+    enabled: $('mcpEnabled').checked,
+    path: $('mcpPath').value.trim() || '/mcp',
+    token: $('mcpToken').value.trim()
+  });
+  return base;
+}
+
+// 设备局域网 IPv4：优先默认路由的 src（出口网卡），其次第一个非回环地址
+let LAN_IP = '';
+
+async function detectLanIp(){
+  try {
+    const r = await exec("ip route get 1.1.1.1 2>/dev/null | head -n1 | awk '{for(i=1;i<=NF;i++) if($i==\"src\") print $(i+1)}'");
+    if (r.errno === 0 && String(r.stdout).trim()) { LAN_IP = String(r.stdout).trim(); return; }
+    const r2 = await exec("ip -4 addr 2>/dev/null | awk '/inet /{print $2}' | cut -d/ -f1 | grep -v '^127\\.' | head -n1");
+    if (r2.errno === 0 && String(r2.stdout).trim()) LAN_IP = String(r2.stdout).trim();
+  } catch(e){ /* 非 KSU 环境或命令不可用时留空 */ }
+}
+
+function splitListen(listen){
+  const raw = String(listen || '').trim() || '127.0.0.1:18790';
+  const idx = raw.lastIndexOf(':');
+  let host = idx < 0 ? '127.0.0.1' : raw.slice(0, idx);
+  let port = idx < 0 ? raw : raw.slice(idx + 1);
+  host = host.replace(/^\[|\]$/g, '');
+  return { host: host, port: (port || '18790').trim() };
+}
+
+// MCP 端点预览：按监听范围推导 host。
+// 不能用 location.hostname —— KSU WebUI 的内部域名是 mui.kernelsu.org，
+// 拼进去会得到 http://mui.kernelsu.org:18790/mcp 这种不可用地址。
+function syncMcpEndpoint(){
+  const rawPath = $('mcpPath').value.trim() || '/mcp';
+  const path = rawPath.startsWith('/') ? rawPath : '/' + rawPath;
+  if (!KSU_MODE) {
+    // 服务器模式：对外地址由服务端按 webui.publicUrl / 请求 Host 推导。
+    // 页面自己拼不准 —— 反向代理、域名、端口映射都可能和进程监听地址不同。
+    const ep = (SERVER_INFO && SERVER_INFO.mcp && SERVER_INFO.mcp.endpoint) || (location.origin + path);
+    $('mcpEndpoint').value = ep;
+    renderMcpSnippet();
+    return;
+  }
+  const lp = splitListen($('listen').value);
+  let host;
+  if (lp.host === '' || lp.host === '127.0.0.1' || lp.host === 'localhost') {
+    host = '127.0.0.1';
+  } else if (lp.host === '0.0.0.0' || lp.host === '::') {
+    host = LAN_IP || '127.0.0.1';
+  } else {
+    host = lp.host;
+  }
+  $('mcpEndpoint').value = 'http://' + host + ':' + lp.port + path;
+  renderMcpSnippet();
+}
+
+async function copyEndpoint(){
+  const text = $('mcpEndpoint').value;
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+    } else {
+      const el = $('mcpEndpoint');
+      el.removeAttribute('readonly');
+      el.select();
+      document.execCommand('copy');
+      el.setAttribute('readonly', 'readonly');
+    }
+    out('已复制：' + text);
+    toast('已复制到剪贴板');
+  } catch(e){
+    out('复制失败：' + e.message);
+    toast('复制失败，请手动选择输入框内容', false);
+  }
+}
+
+// ── MCP 客户端配置格式 ───────────────────────────────────────────────
+// 与 App 端 lib/agent/mcp_client_formats.dart 同源；新增客户端需两处同步。
+function j(obj){ return JSON.stringify(obj, null, 2); }
+function withHeaders(obj, token){
+  if (token) obj.headers = { Authorization: 'Bearer ' + token };
+  return obj;
+}
+
+const MCP_CLIENTS = [
+  { id:'cursor', name:'Cursor',
+    build:(u,t) => j({ mcpServers:{ qinglong_core: withHeaders({ type:'http', url:u }, t) } }) },
+  { id:'claude_code', name:'Claude Code',
+    build:(u,t) => 'claude mcp add --transport http qinglong_core "' + u + '"' +
+      (t ? ' --header "Authorization: Bearer ' + t + '"' : '') },
+  { id:'codex', name:'Codex (OpenAI)',
+    build:(u,t) => 'codex mcp add qinglong_core --url "' + u + '"\n\n' +
+      '# 或写入 ~/.codex/config.toml\n[mcp_servers.qinglong_core]\nurl = "' + u + '"' +
+      (t ? '\nhttp_headers = { Authorization = "Bearer ' + t + '" }' : '') },
+  { id:'copilot', name:'GitHub Copilot',
+    build:(u,t) => j({ servers:{ qinglong_core: withHeaders({ type:'http', url:u }, t) } }) },
+  { id:'cherry', name:'Cherry Studio',
+    build:(u,t) => j({ mcpServers:{ qinglong_core: withHeaders({ type:'streamableHttp', url:u }, t) } }) },
+  { id:'cline', name:'Cline / Roo Code',
+    build:(u,t) => j({ mcpServers:{ qinglong_core: withHeaders({ type:'streamableHttp', url:u }, t) } }) },
+  { id:'lingma', name:'Tongyi Lingma（通义灵码）',
+    build:(u,t) => j({ mcpServers:{ qinglong_core: withHeaders({ type:'streamableHttp', url:u }, t) } }) },
+  { id:'kimi', name:'Kimi (Moonshot)',
+    build:(u,t) => j({ mcpServers:{ qinglong_core: withHeaders({ type:'http', url:u }, t) } }) },
+  { id:'doubao', name:'Doubao (MarsCode)',
+    build:(u,t) => j({ mcpServers:{ qinglong_core: withHeaders({ type:'http', url:u }, t) } }) },
+  { id:'trae', name:'Trae',
+    build:(u,t) => j({ mcpServers:{ qinglong_core: withHeaders({ type:'http', url:u }, t) } }) },
+  { id:'qoder', name:'Qoder',
+    build:(u,t) => j({ mcpServers:{ qinglong_core: withHeaders({ type:'http', url:u }, t) } }) },
+  { id:'gemini', name:'Gemini CLI',
+    build:(u,t) => j({ mcpServers:{ qinglong_core: withHeaders({ httpUrl:u }, t) } }) },
+  { id:'windsurf', name:'Windsurf',
+    build:(u,t) => j({ mcpServers:{ qinglong_core: withHeaders({ serverUrl:u }, t) } }) },
+  { id:'zed', name:'Zed',
+    build:(u,t) => j({ context_servers:{ qinglong_core: withHeaders({ source:'custom', url:u }, t) } }) },
+  { id:'continue', name:'Continue',
+    build:(u,t) => 'mcpServers:\n  - name: qinglong_core\n    type: streamable-http\n    url: ' + u +
+      (t ? '\n    headers:\n      Authorization: "Bearer ' + t + '"' : '') },
+  { id:'goose', name:'Goose',
+    build:(u,t) => 'extensions:\n  qinglong_core:\n    enabled: true\n    type: streamable_http\n    uri: ' + u +
+      (t ? '\n    headers:\n      Authorization: "Bearer ' + t + '"' : '') },
+  { id:'claude_desktop', name:'Claude Desktop',
+    build:(u,t) => j({ mcpServers:{ qinglong_core:{
+      command:'npx',
+      args:['-y','mcp-remote',u].concat(t ? ['--header','Authorization: Bearer ' + t] : [])
+    } } }) },
+  { id:'generic', name:'通用 Streamable HTTP',
+    build:(u,t) => j({ mcpServers:{ qinglong_core: withHeaders({ type:'http', url:u }, t) } }) },
+  { id:'url', name:'仅端点 URL',
+    build:(u,t) => u }
+];
+
+function currentMcpToken(){
+  return ($('mcpToken').value.trim() || $('authToken').value.trim());
+}
+
+function renderMcpSnippet(){
+  const sel = $('mcpClient');
+  if (!sel.options.length) return;
+  const client = MCP_CLIENTS.find(c => c.id === sel.value) || MCP_CLIENTS[0];
+  $('mcpSnippet').textContent = client.build($('mcpEndpoint').value, currentMcpToken());
+}
+
+async function copySnippet(){
+  const text = $('mcpSnippet').textContent;
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+    } else {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+    }
+    toast('配置片段已复制');
+  } catch(e){
+    toast('复制失败，请手动长按选择', false);
+  }
+}
+
+// ── 自绘下拉 ────────────────────────────────────────────────────────
+// 原生 <select> 的皮肤由系统决定，在深色卡片里会露出一块浅色控件；
+// 这里保留隐藏的 #mcpClient 作取值源，交互全走 .picker。
+const PICKER_MENU_H = 246; // 菜单最大高度 240 + 6px 间距，用于判断向上弹
+
+function renderMcpMenu(){
+  const cur = $('mcpClient').value;
+  $('mcpClientMenu').innerHTML = MCP_CLIENTS.map(c =>
+    '<div class="picker-item' + (c.id === cur ? ' sel' : '') + '" data-id="' + c.id + '">' +
+      '<span>' + c.name + '</span>' +
+      (c.id === cur ? '<span class="picker-check">✓</span>' : '') +
+    '</div>'
+  ).join('');
+}
+
+function syncMcpPicker(){
+  const cur = $('mcpClient').value;
+  const c = MCP_CLIENTS.find(x => x.id === cur) || MCP_CLIENTS[0];
+  $('mcpClientLabel').textContent = c.name;
+  renderMcpMenu();
+}
+
+// 下方空间不足且上方更宽裕时向上弹，避免菜单被视口底部裁掉
+function openMcpPicker(open){
+  const menu = $('mcpClientMenu');
+  const trigger = $('mcpClientTrigger');
+  if (open) {
+    const r = trigger.getBoundingClientRect();
+    const below = window.innerHeight - r.bottom;
+    menu.classList.toggle('up', below < PICKER_MENU_H && r.top > below);
+  }
+  menu.classList.toggle('open', open);
+  trigger.classList.toggle('open', open);
+  if (open) {
+    // 19 项超出 240px 高度，展开时把选中项滚到可视区中间
+    const sel = menu.querySelector('.picker-item.sel');
+    if (sel) menu.scrollTop = Math.max(0, sel.offsetTop - (menu.clientHeight - sel.offsetHeight) / 2);
+  }
+}
+
+function initMcpClients(){
+  const sel = $('mcpClient');
+  sel.innerHTML = MCP_CLIENTS
+    .map(c => '<option value="' + c.id + '">' + c.name + '</option>')
+    .join('');
+  if (!MCP_CLIENTS.some(c => c.id === sel.value)) sel.value = MCP_CLIENTS[0].id;
+  syncMcpPicker();
+}
+
+async function load(){
+  if (KSU_MODE) await detectLanIp();
+  // 先拿状态：服务器模式的 MCP 端点要由 status 提供，配置填完才有地址可拼
+  await refresh(true);
+  try {
+    const cfg = await api.readConfig();
+    if (cfg) { fill(cfg); out('配置已加载'); }
+    else out('尚未生成配置，保存时会创建');
+  } catch(e){
+    if (e.unauthorized) { showLogin(); return; }
+    out('读取失败：' + e.message);
+  }
+  syncMcpEndpoint();
+}
+
+async function refresh(silent){
+  try {
+    const st = await api.status();
+    $('deviceTime').textContent = (st.label || '时间') + ' ' + (st.now || '—');
+    $('statusDot').className = 'dot' + (st.on ? ' on' : '');
+    $('statusText').textContent = st.on ? ('运行中 · pid ' + (st.pid || '—')) : '未运行';
+    if (st.configPath && $('pathHint')) $('pathHint').textContent = st.configPath;
+    if (st.auditPath && $('auditHint')) $('auditHint').textContent = st.auditPath;
+    if (st.logs && String(st.logs).trim()) out(st.logs);
+    if (!KSU_MODE) syncMcpEndpoint();
+    if (!silent) toast(st.on ? '状态已刷新' : '服务未运行', st.on);
+  } catch(e){
+    if (e.unauthorized) { showLogin(); if (!silent) toast('需要访问令牌', false); return; }
+    $('statusText').textContent = '无法读取状态：' + e.message;
+    if (!silent) toast('读取状态失败', false);
+  }
+}
+
+async function save(){
+  const btn = $('save');
+  if (btn.disabled) return;
+  btn.disabled = true;
+  const label = btn.textContent;
+  btn.textContent = '保存中…';
+  try {
+    const json = JSON.stringify(collect(), null, 2);
+    await api.saveConfig(json);
+    RAW_CONFIG = JSON.parse(json);
+    out('已保存，服务正在重启…');
+    toast('已保存，服务重启中…');
+    // 服务器模式由 systemd 拉起，KSU 由 watchdog 拉起，两者都要等一会儿再探活
+    setTimeout(() => refresh(true), KSU_MODE ? 1500 : 2500);
+  } catch(e){
+    if (e.unauthorized) showLogin();
+    out('保存失败：' + e.message);
+    toast('保存失败：' + e.message, false);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
+  }
+}
+
+async function showLogs(){
+  try {
+    out(await api.logs() || '暂无日志');
+    toast('日志已加载');
+  } catch(e){
+    if (e.unauthorized) return showLogin();
+    out('读取日志失败：' + e.message);
+    toast('读取日志失败', false);
+  }
+}
+
+async function showAudit(){
+  try {
+    out(await api.audit() || '暂无审计记录');
+    toast('审计已加载');
+  } catch(e){
+    if (e.unauthorized) return showLogin();
+    out('读取审计失败：' + e.message);
+    toast('读取审计失败', false);
+  }
+}
+
+$('listen').addEventListener('input', syncMcpEndpoint);
+$('mcpPath').addEventListener('input', syncMcpEndpoint);
+$('mcpCopy').addEventListener('click', copyEndpoint);
+$('mcpClient').addEventListener('change', () => { syncMcpPicker(); renderMcpSnippet(); });
+$('mcpClientTrigger').addEventListener('click', (e) => {
+  e.stopPropagation();
+  openMcpPicker(!$('mcpClientMenu').classList.contains('open'));
+});
+$('mcpClientMenu').addEventListener('click', (e) => {
+  const item = e.target.closest('.picker-item');
+  if (!item) return;
+  e.stopPropagation();
+  $('mcpClient').value = item.dataset.id;
+  syncMcpPicker();
+  renderMcpSnippet();
+  openMcpPicker(false);
+});
+// 点空白处 / 切后台 / 转屏时收起，避免菜单挂在页面上
+document.addEventListener('click', () => openMcpPicker(false));
+window.addEventListener('resize', () => openMcpPicker(false));
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') openMcpPicker(false); });
+$('mcpCopyClient').addEventListener('click', copySnippet);
+$('authToken').addEventListener('input', renderMcpSnippet);
+$('mcpToken').addEventListener('input', renderMcpSnippet);
+$('save').addEventListener('click', save);
+$('refresh').addEventListener('click', async () => {
+  const btn = $('refresh');
+  if (btn.disabled) return;
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '刷新中…';
+  await refresh();
+  btn.disabled = false;
+  btn.textContent = label;
+});
+$('logs').addEventListener('click', showLogs);
+$('audit').addEventListener('click', showAudit);
+
+$('loginBtn').addEventListener('click', async () => {
+  const t = $('loginToken').value.trim();
+  if (!t) { toast('请先填访问令牌', false); return; }
+  setToken(t);
+  try {
+    await apiFetch('/api/status');
+    $('loginCard').style.display = 'none';
+    toast('已连接');
+    await load();
+  } catch(e){
+    setToken('');
+    toast('令牌不正确', false);
+  }
+});
+$('loginToken').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') $('loginBtn').click();
+});
+
+$('modeBadge').textContent = KSU_MODE ? 'KernelSU 模块' : '服务器模式';
+if (!KSU_MODE) {
+  $('deviceTime').textContent = '服务端时间 —';
+  // 同一份页面在服务器上要讲服务器的话：端口暴露方式、反代、publicUrl 都和手机不同
+  $('listenHint').innerHTML = '建议只监听 <code>127.0.0.1</code>，由 Nginx / Caddy 反代并加 HTTPS；' +
+    '改成 <code>0.0.0.0</code> 时必须先配置访问令牌，否则管理 API 只接受本机。';
+  $('mcpHint').innerHTML = '这段配置可直接粘给客户端。地址按 <code>webui.publicUrl</code> 或当前访问域名推导，' +
+    '走反向代理时请在 config.json 里填 publicUrl，否则端口容易猜错。' +
+    '片段已自动带上认证头（优先「独立令牌」，为空用上方「访问令牌」），含令牌请注意不要外发。';
+}
+initMcpClients();
+load();
+</script>
+</body>
+</html>

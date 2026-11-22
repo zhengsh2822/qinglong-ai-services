@@ -1,0 +1,40 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+          cache-dependency-path: src/go.sum
+
+      - name: 安装打包依赖
+        run: sudo apt-get update && sudo apt-get install -y zip
+
+      - name: 测试
+        working-directory: src
+        run: go vet ./... && go test ./...
+
+      - name: 构建（KSU zip + linux amd64/arm64）
+        run: bash build.sh
+
+      - name: 发布 Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/agentcore-linux-amd64
+            dist/agentcore-linux-arm64
+            apk_output/*.zip
+          generate_release_notes: true

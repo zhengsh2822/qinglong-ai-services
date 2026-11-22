@@ -1,0 +1,32 @@
+{
+  "listen": "0.0.0.0:18790",
+  "authToken": "",
+  "llm": {
+    "baseUrl": "",
+    "apiKey": "",
+    "model": ""
+  },
+  "qinglong": {
+    "baseUrl": "http://127.0.0.1:5700",
+    "token": "",
+    "clientId": "",
+    "clientSecret": ""
+  },
+  "qqbot": {
+    "enabled": false,
+    "appId": "",
+    "appSecret": ""
+  },
+  "mcp": {
+    "enabled": true,
+    "path": "/mcp",
+    "token": ""
+  },
+  "webui": {
+    "enabled": false,
+    "listen": "127.0.0.1:18791",
+    "token": "",
+    "publicUrl": ""
+  },
+  "maxRounds": 4
+}

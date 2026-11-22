@@ -1,0 +1,25 @@
+# 编译产物
+bin/agentcore
+dist/
+src/agentcore
+src/agentcore.exe
+
+# 打包结果
+*.zip
+apk_output/
+
+# 运行时数据（配置里有令牌、审计里有对话）
+config.json
+audit.jsonl
+stdout.log
+watchdog.log
+data/
+
+# 说明：src/internal/webui/index.html 是 webroot/index.html 的内嵌副本，
+# 由 build.sh 自动同步。故意入库，保证不经构建脚本也能直接 go build / go test。
+
+# 编辑器、系统垃圾
+.DS_Store
+Thumbs.db
+*.swp
+*.tmp

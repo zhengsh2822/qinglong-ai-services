@@ -1,0 +1,6 @@
+id=ksu_agent_core
+name=Qinglong AI Services
+version=0.1.4
+versionCode=5
+author=qinglong_app_glass
+description=青龙面板的常驻 AI 服务：OpenAI 兼容模型 + 青龙 OpenAPI 工具 + 人工确认状态机 + MCP 7×24 端点；支持 KernelSU 模块与云服务器/Docker 部署。

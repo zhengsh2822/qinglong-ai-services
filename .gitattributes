@@ -1,0 +1,13 @@
+# 这些文件要在 Linux / Android 上直接执行，行尾必须是 LF。
+# Windows 上不做强制的话，git 会把 .sh 转成 CRLF，#!/bin/sh\r 会直接报错。
+* text=auto eol=lf
+
+*.sh      text eol=lf
+*.go      text eol=lf
+*.md      text eol=lf
+*.yml     text eol=lf
+*.json    text eol=lf
+*.prop    text eol=lf
+*.rule    text eol=lf
+Dockerfile text eol=lf
+*.disabled text eol=lf

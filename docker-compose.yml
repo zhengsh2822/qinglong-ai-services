@@ -1,0 +1,19 @@
+services:
+  qinglong-ai:
+    build: .
+    image: qinglong-ai-services:latest
+    container_name: qinglong-ai
+    restart: unless-stopped
+    ports:
+      # API / MCP：要给 Cursor、Claude Code 连就得对外（或经反代）
+      - "18790:18790"
+      # 管理页：默认只映射到宿主机回环，外部经 Nginx / Caddy 反代加 HTTPS
+      - "127.0.0.1:18791:18791"
+    volumes:
+      - ./data:/data
+    environment:
+      # 首次启动用它当访问令牌；不填则随机生成并打印在容器日志里
+      QAS_TOKEN: ""
+      # 走反代时填对外地址，用来自动拼 MCP 端点
+      QAS_PUBLIC_URL: ""
+      TZ: Asia/Shanghai

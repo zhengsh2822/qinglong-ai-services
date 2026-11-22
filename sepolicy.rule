@@ -1,0 +1,4 @@
+# KernelSU 额外 SELinux 规则
+# 服务以 su domain 运行，默认已具备网络与文件访问能力；
+# 若在部分机型上出现 bind/listen 被拒，再按需放开：
+# allow su self:tcp_socket { create bind listen accept read write };
