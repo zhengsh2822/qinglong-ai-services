@@ -190,6 +190,133 @@ POST /v1/agent/confirm
 健康检查：`GET /health` → `{"ok":true,"version":"...","timezone":"..."}`（固定免鉴权，
 安装脚本的就绪检查、systemd/容器探针、反代健康检查都裸打它）。
 
+## 反向代理 / HTTPS
+
+令牌是明文 Bearer，跨机器访问必须走 HTTPS。服务对反代是透明的：按
+`X-Forwarded-Proto` / `X-Forwarded-Host` 推导对外地址，不需要额外开关。
+MCP 是单次 JSON-RPC（不开 SSE），QQ bot 是出站连接——**反代不用配 WebSocket / SSE**。
+
+| 端口 | 内容 | 建议 |
+|---|---|---|
+| 18790 | `/health`、`/v1/agent/*`、`/mcp` | 暴露给客户端 |
+| 18791 | 管理页 + `/api/*` | 能不上公网就不上（SSH 隧道 / 内网白名单） |
+
+单域名按路径分流即可。安装时就把两个端口收回环，并填好对外地址：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/zhengsh2822/qinglong-ai-services/main/deploy/install.sh \
+  | sudo bash -s -- \
+      --token 全局令牌 \
+      --bind 127.0.0.1 \
+      --webui-bind 127.0.0.1 \
+      --public-url https://ai.example.com
+```
+
+> 反代不在 443 标准端口时（如 `https://host:8443`），**必须**填 `--public-url`
+> 或在管理页填 `webui.publicUrl`。否则按 Host 端口推导会把 MCP 端点落到 18790，客户端连错。
+
+### Caddy
+
+公网域名（80/443 可达时自动签 Let's Encrypt）：
+
+```caddyfile
+ai.example.com {
+	handle /api/*  { reverse_proxy 127.0.0.1:18791 }
+	handle /health { reverse_proxy 127.0.0.1:18790 }
+	handle /v1/*   { reverse_proxy 127.0.0.1:18790 }
+	handle /mcp    { reverse_proxy 127.0.0.1:18790 }
+	handle         { reverse_proxy 127.0.0.1:18791 }
+}
+```
+
+局域网自签（域名或 IP 都行）：
+
+```caddyfile
+{
+	# 不往系统信任库装根证书，改由你分发 root.crt
+	skip_install_trust
+}
+
+https://192.168.1.10 {
+	tls internal
+
+	handle /api/*  { reverse_proxy 127.0.0.1:18791 }
+	handle /health { reverse_proxy 127.0.0.1:18790 }
+	handle /v1/*   { reverse_proxy 127.0.0.1:18790 }
+	handle /mcp    { reverse_proxy 127.0.0.1:18790 }
+	handle         { reverse_proxy 127.0.0.1:18791 }
+}
+```
+
+根证书位置：Linux `/var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt`，
+Windows `%APPDATA%\Caddy\pki\authorities\local\root.crt`。装到客户端信任库才无警告。
+
+### Nginx
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name ai.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/ai.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/ai.example.com/privkey.pem;
+
+    client_max_body_size 1m;
+    proxy_http_version 1.1;
+    proxy_set_header Host              $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Host  $host;
+    proxy_set_header X-Real-IP         $remote_addr;
+
+    location = /health { proxy_pass http://127.0.0.1:18790; }
+    location /mcp      { proxy_pass http://127.0.0.1:18790; }
+
+    location /v1/ {
+        proxy_pass http://127.0.0.1:18790;
+        # 同步等模型回答，默认 60s 会被掐断
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+    }
+
+    location /api/ { proxy_pass http://127.0.0.1:18791; }
+    location /     { proxy_pass http://127.0.0.1:18791; }
+}
+
+server {
+    listen 80;
+    server_name ai.example.com;
+    return 301 https://$host$request_uri;
+}
+```
+
+局域网没域名用自签，客户端导入 `ai.crt`：
+
+```bash
+openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+  -keyout ai.key -out ai.crt -subj "/CN=ai.lan" \
+  -addext "subjectAltName=DNS:ai.lan,IP:192.168.1.10"
+```
+
+### 加固与自检
+
+- 三个令牌分开：`authToken`（API）、`mcp.token`（给 Cursor / Claude Code）、`webui.token`（管理页）。
+- 管理页不想公开：`location /` 加 `allow 192.168.0.0/16; deny all;`，或只走 SSH 隧道。
+- 防刷模型额度：给 `/v1/agent/message` 加 `limit_req`。
+
+```bash
+curl -fsS https://ai.example.com/health                                      # 200
+curl -s -o /dev/null -w '%{http_code}\n' https://ai.example.com/api/status    # 401
+curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer 全局令牌" \
+     https://ai.example.com/api/status                                        # 200
+curl -s -X POST https://ai.example.com/mcp \
+  -H "Authorization: Bearer MCP令牌" -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"probe","version":"1"}}}'
+```
+
+客户端填的 MCP 地址就是 `https://ai.example.com/mcp` +
+`Authorization: Bearer <mcp.token>`。
+
 ## 安全
 
 - 默认只监听回环；对外必须设 `authToken`，否则非本机请求直接 403。
@@ -198,7 +325,7 @@ POST /v1/agent/confirm
 - `run_task` / `stop_task` 永远需要人工确认。
 - 工具结果经脱敏规则处理（`value` / `token` / `cookie` 等字段打码）后才交给模型。
 - 审计：`audit.jsonl`（谁、何时、调了什么、是否确认）。
-- 管理页只经 HTTP、别直接暴露到公网裸端口；要么 SSH 隧道，要么反代加 HTTPS。
+- 管理页只经 HTTP、别直接暴露到公网裸端口；要么 SSH 隧道，要么反代加 HTTPS（见「反向代理 / HTTPS」）。
 
 ## 构建与开发
 
