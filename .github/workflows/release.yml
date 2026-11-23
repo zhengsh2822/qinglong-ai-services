@@ -27,6 +27,9 @@ jobs:
         run: go vet ./... && go test ./...
 
       - name: 构建（KSU zip + linux amd64/arm64）
+        env:
+          # 让 zip 落在 workspace 内，下面的 apk_output/*.zip 才能被发布
+          QAS_OUT_DIR: ${{ github.workspace }}
         run: bash build.sh
 
       - name: 发布 Release

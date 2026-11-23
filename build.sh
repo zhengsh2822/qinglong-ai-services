@@ -5,7 +5,10 @@
 set -e
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 VERSION="$(grep '^version=' "$ROOT/module.prop" | cut -d= -f2)"
-OUT_DIR="$(cd "$ROOT/.." && pwd)"
+# 默认把 zip 放在项目上一级（本机习惯）；CI 用 QAS_OUT_DIR 指到 workspace，
+# 否则 apk_output 落在 workspace 外，release 的 apk_output/*.zip 会匹配不到。
+OUT_DIR="${QAS_OUT_DIR:-$(cd "$ROOT/.." && pwd)}"
+export QAS_OUT_DIR="$OUT_DIR"
 DIST="$ROOT/dist"
 ZIP="$OUT_DIR/apk_output/ksu_agent_core_v${VERSION}.zip"
 

@@ -8,7 +8,8 @@ for line in open(os.path.join(ROOT, "module.prop"), encoding="utf-8"):
     if line.startswith("version="):
         VERSION = line.strip().split("=", 1)[1]
 
-OUT = os.path.join(ROOT, "..", "apk_output", "ksu_agent_core_v%s.zip" % VERSION)
+OUT_DIR = os.environ.get("QAS_OUT_DIR") or os.path.join(ROOT, "..")
+OUT = os.path.join(OUT_DIR, "apk_output", "ksu_agent_core_v%s.zip" % VERSION)
 os.makedirs(os.path.dirname(OUT), exist_ok=True)
 
 SKIP_DIRS = {"src", "tools", "deploy", "dist", "__pycache__", ".git", ".github"}
